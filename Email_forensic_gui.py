@@ -69,16 +69,18 @@ class EmailForensicGUI:
             self.result_text.delete(1.0, tk.END)
             self.result_text.insert(tk.END, self.result_text_data)
             self.save_button.config(state=tk.NORMAL)
-
+            
     def save_report(self):
-        """Saves the forensic report to a text file."""
+        """Saves the forensic report to a text file with UTF-8 encoding."""
         if self.result_text_data:
             save_path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt")])
-            if save_path:
-                with open(save_path, "w") as file:
+        if save_path:
+            try:
+                with open(save_path, "w", encoding="utf-8") as file:
                     file.write(self.result_text_data)
                 messagebox.showinfo("Success", "Report saved successfully!")
-
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save report: {e}")
 
 class BasicEmailParser:
     """Class to perform email forensic analysis."""
@@ -125,9 +127,16 @@ class BasicEmailParser:
             if match:
                 return match.group(0)
         return None
-
+    
     def _geolocate_ip(self, ip_address: str) -> str:
-        return "Feature Disabled (Offline Mode)"
+        """Gets geolocation for the sender's IP."""
+        try:
+           response = requests.get(f"https://ipinfo.io/{ip_address}/json", timeout=5)
+           response.raise_for_status()  # Raises HTTP error if request fails
+           data = response.json()
+           return f"{data.get('city', 'Unknown')}, {data.get('region', 'Unknown')}, {data.get('country', 'Unknown')}"
+        except requests.exceptions.RequestException:
+            return "Geolocation Not Available (Check Internet)"
 
     def _analyze_body(self):
         """Extracts and analyzes email content."""
@@ -153,12 +162,16 @@ class BasicEmailParser:
         return "\n".join(content_parts)
 
     def _analyze_links(self, content: str):
-        """Extracts and scans links for phishing attempts."""
-        soup = BeautifulSoup(content, 'html.parser')
-        links = soup.find_all('a', href=True)
-        self.result_text += "\n--- Extracted Links ---\n"
-        for i, link in enumerate(links, 1):
-            self.result_text += f"{i}. {link.text.strip()} -> {link['href']}\n"
+       """Extracts and scans links for phishing attempts."""
+       soup = BeautifulSoup(content, 'html.parser')
+       links = soup.find_all('a', href=True)
+       self.result_text += "\n--- Extracted Links ---\n"
+
+       suspicious_keywords = ["login", "verify", "update", "secure", "bank", "account", "confirm"]
+       for i, link in enumerate(links, 1):
+        url = link['href']
+        is_suspicious = any(keyword in url.lower() for keyword in suspicious_keywords)
+        self.result_text += f"{i}. {link.text.strip()} -> {url} {'(⚠️ Suspicious!)' if is_suspicious else ''}\n"
 
     def _check_spf_dkim_dmarc(self):
         """Checks SPF, DKIM, and DMARC authentication."""
@@ -175,7 +188,6 @@ class BasicEmailParser:
                 filename = part.get_filename()
                 if filename:
                     self.result_text += f"Attachment Found: {filename}\n"
-
 
 if __name__ == "__main__":
     root = tk.Tk()
